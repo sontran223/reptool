@@ -6,6 +6,7 @@ use std::process;
 
 use regex::Regex;
 use getopts::Options;
+use tracing::{error, info, span, warn, Level};
 
 struct RepToolOption {
     input_path : String,
@@ -18,7 +19,7 @@ struct RepToolOption {
 
 fn print_usage(program: &str, opts: &Options) {
     let brief = format!("Usage: {} [options] <input_path> <search_string> <replace_string>", program);
-    print!("{}", opts.usage(&brief));
+    info!("{}", opts.usage(&brief));
 }
 
 fn replace_files(extensions: &[&str], option: &RepToolOption, copy_enable: bool) -> io::Result<()> {
@@ -33,6 +34,7 @@ fn replace_files(extensions: &[&str], option: &RepToolOption, copy_enable: bool)
     }
 
     // Iterate over the files in the input directory
+    let mut is_found = false;
     let files = fs::read_dir(input_dir)?;
     for file in files {
         let file = file?;
@@ -40,26 +42,24 @@ fn replace_files(extensions: &[&str], option: &RepToolOption, copy_enable: bool)
 
         if file_path.is_file() {
             // Check if the file has one of the desired extensions
-            if let Some(file_extension) = file_path.extension() {
+            if extensions.iter().any(|&end| file_path.to_str().unwrap().ends_with(end)) {
                 // Copy and process in output path for all related extension
                 if copy_enable {
-                    if extensions.contains(&file_extension.to_str().unwrap()) {
-                        let file_name = file_path.file_name().unwrap();
-                        let output_file_path = output_dir.join(file_name);
-                        let output_path_str = &output_file_path.to_str().unwrap();
+                    let file_name = file_path.file_name().unwrap();
+                    let output_file_path = output_dir.join(file_name);
+                    let output_path_str = &output_file_path.to_str().unwrap();
 
-                        // Copy the file to the output directory
-                        fs::copy(&file_path, &output_file_path)?;
-                        if option.verbose_mode {
-                            println!("Copied file: {}", output_file_path.to_str().unwrap());
-                        }
+                    // Copy the file to the output directory
+                    fs::copy(&file_path, &output_file_path)?;
+                    if option.verbose_mode {
+                        info!("Copied file: {}", output_file_path.to_str().unwrap());
+                    }
 
-                        // Replace the file .torrent.rtorrent
-                        if file_extension.to_str().unwrap() == "rtorrent" {
-                            if let Err(e) = replace_string_in_file(output_path_str, &option.keyword, &option.search_string, &option.replace_string, option.verbose_mode) {
-                                println!("Error: Replacing string error in file '{}': {}", output_path_str, e);
-                                process::exit(1);
-                            }
+                    // Replace the file .torrent.rtorrent
+                    if output_path_str.ends_with(".torrent.rtorrent") {
+                        let result: bool = replace_string_in_file(output_path_str, &option.keyword, &option.search_string, &option.replace_string, option.verbose_mode)?;
+                        if result {
+                            is_found = result;
                         }
                     }
                 } else {
@@ -67,15 +67,18 @@ fn replace_files(extensions: &[&str], option: &RepToolOption, copy_enable: bool)
                     let input_path_str = file_path.to_str().unwrap();
 
                     // Replace the file .torrent.rtorrent
-                    if file_extension.to_str().unwrap() == "rtorrent" {
-                        if let Err(e) = replace_string_in_file(input_path_str, &option.keyword, &option.search_string, &option.replace_string, option.verbose_mode) {
-                            println!("Error: Replacing string error in file '{}': {}", input_path_str, e);
-                            process::exit(1);
+                    if input_path_str.ends_with(".torrent.rtorrent") {
+                        let result: bool = replace_string_in_file(input_path_str, &option.keyword, &option.search_string, &option.replace_string, option.verbose_mode)?;
+                        if result {
+                            is_found = result;
                         }
                     }
                 }
             }
         }
+    }
+    if !is_found {
+        warn!("No matching found.");
     }
 
     Ok(())
@@ -83,7 +86,7 @@ fn replace_files(extensions: &[&str], option: &RepToolOption, copy_enable: bool)
 
 fn replace_string_in_file(file_path: &str, key: &str, find: &str, replace: &str, verbose: bool) -> io::Result<bool> {
     if verbose {
-       println!("Processing file: {}", file_path);
+       info!("Processing file: {}", file_path);
     }
 
     let mut is_found = false;
@@ -128,6 +131,9 @@ fn replace_string_in_file(file_path: &str, key: &str, find: &str, replace: &str,
 fn main() {
     let args: Vec<String> = env::args().collect();
     let program = args[0].clone();
+
+    let span = span!(Level::TRACE, "reptool span");
+    let _enter = span.enter();
 
     // Parse and validate the options
     let mut opts = Options::new();
@@ -174,24 +180,27 @@ fn main() {
     }
 
     let extensions = ["rtorrent", "torrent", "libtorrent_resume"];
+    if option.verbose_mode {
+        info!("Start replacing files ...");
+    }
     match replace_files(&extensions, &option, copy_enable) {
         Ok(()) =>
         {
             if option.verbose_mode {
-                println!("All files processed successfully.");
+                info!("All files processed successfully.");
             }
         }
         Err(e) => match e.kind() {
             ErrorKind::NotFound => {
-                println!("Error: Input directory not found.");
+                error!("Input directory {} not found.", option.input_path);
                 process::exit(1);
             }
             ErrorKind::PermissionDenied => {
-                println!("Error: Permission denied to access files.");
+                error!("Permission denied to access files.");
                 process::exit(1);
             }
             _ => {
-                println!("Error: Copying or Replacing files error: {}", e);
+                error!("Copying or Replacing files error: {}", e);
                 process::exit(1);
             }
         },
