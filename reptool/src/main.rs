@@ -1,12 +1,14 @@
 use std::env;
 use std::fs;
-use std::io::{self, Seek, Read, Write, ErrorKind};
+use std::io::{self, Seek, Read, Write};
 use std::path::{Path};
 use std::process;
 
 use regex::Regex;
 use getopts::Options;
-use tracing::{error, info, span, warn, Level};
+use anyhow::{Context, Result};
+use tracing::{info, span, warn, Level};
+use tracing_subscriber::{filter::LevelFilter, fmt};
 
 struct RepToolOption {
     input_path : String,
@@ -22,20 +24,20 @@ fn print_usage(program: &str, opts: &Options) {
     info!("{}", opts.usage(&brief));
 }
 
-fn replace_files(extensions: &[&str], option: &RepToolOption, copy_enable: bool) -> io::Result<()> {
+fn replace_files(extensions: &[&str], option: &RepToolOption, copy_enable: bool) -> Result<()> {
     let input_dir = Path::new(&option.input_path);
     let output_dir = Path::new(&option.output_path);
 
     if copy_enable {
         // Create the output directory if it doesn't exist
         if !output_dir.exists() {
-            fs::create_dir_all(output_dir)?;
+           fs::create_dir_all(output_dir).with_context(|| format!("Failed to create output directory: {:?}", &option.output_path))?;
         }
     }
 
     // Iterate over the files in the input directory
     let mut is_found = false;
-    let files = fs::read_dir(input_dir)?;
+    let files = fs::read_dir(input_dir).with_context(|| format!("Failed to read input directory: {:?}", &option.input_path))?;
     for file in files {
         let file = file?;
         let file_path = file.path();
@@ -50,7 +52,7 @@ fn replace_files(extensions: &[&str], option: &RepToolOption, copy_enable: bool)
                     let output_path_str = &output_file_path.to_str().unwrap();
 
                     // Copy the file to the output directory
-                    fs::copy(&file_path, &output_file_path)?;
+                    fs::copy(&file_path, &output_file_path).with_context(|| format!("Failed to copy file {:?}", file_path))?;
                     if option.verbose_mode {
                         info!("Copied file: {}", output_file_path.to_str().unwrap());
                     }
@@ -84,13 +86,13 @@ fn replace_files(extensions: &[&str], option: &RepToolOption, copy_enable: bool)
     Ok(())
 }
 
-fn replace_string_in_file(file_path: &str, key: &str, find: &str, replace: &str, verbose: bool) -> io::Result<bool> {
+fn replace_string_in_file(file_path: &str, key: &str, find: &str, replace: &str, verbose: bool) -> Result<bool> {
     if verbose {
        info!("Processing file: {}", file_path);
     }
 
     let mut is_found = false;
-    let mut file = fs::OpenOptions::new().read(true).write(true).open(file_path)?;
+    let mut file = fs::OpenOptions::new().read(true).write(true).open(file_path).with_context(|| format!("Failed to open file: {:?}", file_path))?;
     let mut content = String::new();
 
     file.read_to_string(&mut content)?;
@@ -128,7 +130,7 @@ fn replace_string_in_file(file_path: &str, key: &str, find: &str, replace: &str,
     Ok(is_found)
 }
 
-fn main() {
+fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
     let program = args[0].clone();
 
@@ -179,32 +181,24 @@ fn main() {
         option.output_path = search_key.to_string();
     }
 
+    // Create the tracing subscriber with the specified level filter
+    let mut level_filter = LevelFilter::WARN;
+    if option.verbose_mode {
+        level_filter = LevelFilter::TRACE;
+    }
+
+    let subscriber = fmt::Subscriber::builder()
+        .with_max_level(level_filter)
+        .finish();
+
+    // Initialize the tracing subscriber with your custom subscriber
+    tracing::subscriber::set_global_default(subscriber).expect("Failed to set the subscriber");
+
     let extensions = ["rtorrent", "torrent", "libtorrent_resume"];
     if option.verbose_mode {
         info!("Start replacing files ...");
     }
-    match replace_files(&extensions, &option, copy_enable) {
-        Ok(()) =>
-        {
-            if option.verbose_mode {
-                info!("All files processed successfully.");
-            }
-        }
-        Err(e) => match e.kind() {
-            ErrorKind::NotFound => {
-                error!("Input directory {} not found.", option.input_path);
-                process::exit(1);
-            }
-            ErrorKind::PermissionDenied => {
-                error!("Permission denied to access files.");
-                process::exit(1);
-            }
-            _ => {
-                error!("Copying or Replacing files error: {}", e);
-                process::exit(1);
-            }
-        },
-    }
-
-    process::exit(0); // Return error code 0 on success
+    replace_files(&extensions, &option, copy_enable)
+        .context("Failed to modify files")
+        .map(|_| info!("File modification completed successfully"))
 }
