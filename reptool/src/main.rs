@@ -1,34 +1,46 @@
-use std::env;
 use std::fs;
 use std::io::{self, Seek, Read, Write};
 use std::path::{Path};
-use std::process;
 
 use regex::Regex;
-use getopts::Options;
+use clap::Parser;
 use anyhow::{Context, Result};
 use tracing::{info, span, warn, Level};
 use tracing_subscriber::{filter::LevelFilter, fmt};
 
+#[derive(Parser)]
+#[command(name = "reptool")]
+#[command(author = "sontran")]
+#[command(version = "1.0")]
+#[command(about = "Replace string for .torrent.rtorrent", long_about = None)]
 struct RepToolOption {
+    /// Input path contains .torrent.rtorrent
     input_path : String,
+
+    /// Search string
     search_string : String,
+
+    /// Replace string
     replace_string : String,
+
+    /// Show all infos
+    #[arg(short, long)]
     verbose_mode : bool,
+
+    /// Define output path to copy and modify, untouch input path files
+    #[arg(short, long, default_value_t = String::from(""))]
     output_path : String,
+
+    /// Define keyword to search and replace
+    #[arg(short, long, default_value_t = String::from("directory"))]
     keyword : String,
 }
 
-fn print_usage(program: &str, opts: &Options) {
-    let brief = format!("Usage: {} [options] <input_path> <search_string> <replace_string>", program);
-    info!("{}", opts.usage(&brief));
-}
-
-fn replace_files(extensions: &[&str], option: &RepToolOption, copy_enable: bool) -> Result<()> {
+fn replace_files(extensions: &[&str], option: &RepToolOption) -> Result<()> {
     let input_dir = Path::new(&option.input_path);
     let output_dir = Path::new(&option.output_path);
 
-    if copy_enable {
+    if option.output_path != "" {
         // Create the output directory if it doesn't exist
         if !output_dir.exists() {
            fs::create_dir_all(output_dir).with_context(|| format!("Failed to create output directory: {:?}", &option.output_path))?;
@@ -46,7 +58,7 @@ fn replace_files(extensions: &[&str], option: &RepToolOption, copy_enable: bool)
             // Check if the file has one of the desired extensions
             if extensions.iter().any(|&end| file_path.to_str().unwrap().ends_with(end)) {
                 // Copy and process in output path for all related extension
-                if copy_enable {
+                if option.output_path != "" {
                     let file_name = file_path.file_name().unwrap();
                     let output_file_path = output_dir.join(file_name);
                     let output_path_str = &output_file_path.to_str().unwrap();
@@ -131,55 +143,11 @@ fn replace_string_in_file(file_path: &str, key: &str, find: &str, replace: &str,
 }
 
 fn main() -> Result<()> {
-    let args: Vec<String> = env::args().collect();
-    let program = args[0].clone();
 
     let span = span!(Level::TRACE, "reptool span");
     let _enter = span.enter();
 
-    // Parse and validate the options
-    let mut opts = Options::new();
-    opts.optflag("v", "verbose", "Enable verbose output");
-    opts.optopt("o", "output", "Set output path", "OUTPUT_PATH");
-    opts.optopt("k", "keyword", "Set keyword to parse, \"directoy\" by default", "KEYWORD");
-
-    let matches = match opts.parse(&args[1..]) {
-        Ok(m) => m,
-        Err(e) => {
-            writeln!(io::stderr(), "Error: {}", e).unwrap();
-            print_usage(&program, &opts);
-            process::exit(1);
-        }
-    };
-
-    if matches.free.len() != 3 {
-        print_usage(&program, &opts);
-        process::exit(1);
-    }
-
-    // Construct the options of tool
-    let mut option = RepToolOption {
-        input_path : String::from(&matches.free[0]),
-        search_string : String::from(&matches.free[1]),
-        replace_string : String::from(&matches.free[2]),
-        verbose_mode : matches.opt_present("v"),
-        output_path : String::from(""),
-        keyword : String::from("directory"),
-    };
- 
-    let output_path = matches.opt_str("o");
-    let keyword = matches.opt_str("k");
- 
-    let mut copy_enable = false;
-    if let Some(output_dir) = &output_path {
-        // Copy all neccessary files to new path if defined
-        copy_enable = true;
-        option.output_path = output_dir.to_string();
-    }
-
-    if let Some(search_key) = &keyword {
-        option.output_path = search_key.to_string();
-    }
+    let option: RepToolOption = RepToolOption::parse();
 
     // Create the tracing subscriber with the specified level filter
     let mut level_filter = LevelFilter::WARN;
@@ -198,7 +166,7 @@ fn main() -> Result<()> {
     if option.verbose_mode {
         info!("Start replacing files ...");
     }
-    replace_files(&extensions, &option, copy_enable)
+    replace_files(&extensions, &option)
         .context("Failed to modify files")
         .map(|_| info!("File modification completed successfully"))
 }
