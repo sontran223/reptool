@@ -56,17 +56,17 @@ fn replace_files(extensions: &[&str], option: &RepToolOption) -> Result<()> {
 
         if file_path.is_file() {
             // Check if the file has one of the desired extensions
-            if extensions.iter().any(|&end| file_path.to_str().unwrap().ends_with(end)) {
+            if extensions.iter().any(|&end| file_path.to_str().expect("Invalid file name").ends_with(end)) {
                 // Copy and process in output path for all related extension
                 if option.output_path != "" {
-                    let file_name = file_path.file_name().unwrap();
+                    let file_name = file_path.file_name().expect("Missing file name");
                     let output_file_path = output_dir.join(file_name);
-                    let output_path_str = &output_file_path.to_str().unwrap();
+                    let output_path_str = &output_file_path.to_str().expect("Invalid file name");
 
                     // Copy the file to the output directory
                     fs::copy(&file_path, &output_file_path).with_context(|| format!("Failed to copy file {:?}", file_path))?;
                     if option.verbose_mode {
-                        info!("Copied file: {}", output_file_path.to_str().unwrap());
+                        info!("Copied file: {}", output_file_path.to_str().expect("Invalid file name"));
                     }
 
                     // Replace the file .torrent.rtorrent
@@ -78,7 +78,7 @@ fn replace_files(extensions: &[&str], option: &RepToolOption) -> Result<()> {
                     }
                 } else {
                     // Process file in input path by default
-                    let input_path_str = file_path.to_str().unwrap();
+                    let input_path_str = file_path.to_str().expect("Missing file name");
 
                     // Replace the file .torrent.rtorrent
                     if input_path_str.ends_with(".torrent.rtorrent") {
@@ -110,8 +110,8 @@ fn replace_string_in_file(file_path: &str, key: &str, find: &str, replace: &str,
     file.read_to_string(&mut content)?;
 
     // Only get directory:path to replace
-    let re = Regex::new(format!(r#":({})(\d+):([^:]+)"#, key).as_str()).unwrap();
-    let mat = re.find(&content).unwrap();
+    let re = Regex::new(format!(r#":({})(\d+):([^:]+)"#, key).as_str()).expect("Failed to construct regex pattern");
+    let mat = re.find(&content).expect("Failed to match pattern");
 
     let find_content = &content[mat.start()..mat.end()];
 
@@ -122,7 +122,7 @@ fn replace_string_in_file(file_path: &str, key: &str, find: &str, replace: &str,
         if cap[3].contains(&find) {
             is_found = true;
             let offset_size: i32 = replace.len() as i32 - find.len() as i32;
-            let num: i32 = cap[2].parse().unwrap();
+            let num: i32 = cap[2].parse().expect("Failed to convert string len");
             let new_size = num + offset_size;
             let mut update_string: String = ":".to_owned();
             update_string.push_str(&cap[1]);
