@@ -9,10 +9,10 @@ use tracing::{info, span, warn, Level};
 use tracing_subscriber::{filter::LevelFilter, fmt};
 
 #[derive(Parser)]
-#[command(name = "reptool")]
+#[command(name = "rtorrent_status_file_modifier")]
 #[command(author = "sontran")]
 #[command(version = "1.0")]
-#[command(about = "Replace string for .torrent.rtorrent", long_about = None)]
+#[command(about = "Replace string for .torrent.rtorrent", long_about = "This program modifies rtorrent's status file to change the download path for an already loaded torrent.")]
 struct RepToolOption {
     /// Input path contains .torrent.rtorrent
     input_path : String,
@@ -144,7 +144,7 @@ fn replace_string_in_file(file_path: &str, key: &str, find: &str, replace: &str,
 
 fn main() -> Result<()> {
 
-    let span = span!(Level::TRACE, "reptool span");
+    let span = span!(Level::TRACE, "rtorrent_status_file_modifier span");
     let _enter = span.enter();
 
     let option: RepToolOption = RepToolOption::parse();
